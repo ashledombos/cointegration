@@ -1,0 +1,30 @@
+# Pairs Trading Cointegration System - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Data fetching
+yfinance>=0.2.40
+ccxt>=4.3.0
+requests>=2.31.0
+
+# Statistical analysis
+numpy>=1.26.0
+pandas>=2.2.0
+statsmodels>=0.14.0
+scipy>=1.12.0
+
+# Database
+sqlalchemy>=2.0.0
+
+# Scheduling
+apscheduler>=3.10.0
+
+# Alerts
+python-telegram-bot>=21.0
+discord-webhook>=1.3.0
+aiohttp>=3.9.0
+
+# Utilities
+python-dotenv>=1.0.0
+loguru>=0.7.0
+pytz>=2024.1
+pyarrow>=15.0.0
