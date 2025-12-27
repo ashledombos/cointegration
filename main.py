@@ -82,14 +82,67 @@ class PairsTradingSystem:
     
     async def check_all_pairs(self):
         """Vérifie les signaux pour toutes les paires actives."""
-        logger.info("Checking all active pairs...")
-        
         active_pairs = db.get_active_pairs()
+        
+        if not active_pairs:
+            logger.warning("No active pairs to check")
+            return []
+        
+        logger.info(f"Checking {len(active_pairs)} active pairs...")
+        
         signals_generated = []
+        zscore_summary = []  # Pour le résumé
         
         for pair in active_pairs:
             try:
-                signal = await self.check_pair_signal(pair.pair_id)
+                # Fetch data
+                pair_data = self.fetcher.fetch_pair(
+                    pair.symbol1,
+                    pair.symbol2,
+                    lookback_days=60,
+                    timeframe=config.data.signal_timeframe
+                )
+                
+                if pair_data is None:
+                    logger.warning(f"No data for {pair.pair_id}")
+                    continue
+                
+                # Get cointegration result
+                coint_result = self.analyzer.test_engle_granger(
+                    pair_data["close_1"],
+                    pair_data["close_2"],
+                    pair.symbol1,
+                    pair.symbol2
+                )
+                
+                if coint_result:
+                    # Calculate spread and z-score
+                    spread = self.analyzer.calculate_spread(
+                        pair_data["close_1"],
+                        pair_data["close_2"],
+                        coint_result.hedge_ratio
+                    )
+                    zscore_series = self.analyzer.calculate_zscore(spread)
+                    current_zscore = zscore_series.iloc[-1] if len(zscore_series) > 0 else 0.0
+                    
+                    zscore_summary.append({
+                        "pair": pair.pair_id,
+                        "zscore": current_zscore,
+                        "half_life": coint_result.half_life
+                    })
+                
+                # Generate signal if threshold crossed
+                prices = self.fetcher.get_latest_prices([pair.symbol1, pair.symbol2])
+                signal = self.signal_generator.generate_signal(
+                    pair_id=pair.pair_id,
+                    symbol1=pair.symbol1,
+                    symbol2=pair.symbol2,
+                    series1=pair_data["close_1"],
+                    series2=pair_data["close_2"],
+                    coint_result=coint_result,
+                    current_price1=prices.get(pair.symbol1),
+                    current_price2=prices.get(pair.symbol2)
+                )
                 
                 if signal:
                     signals_generated.append(signal)
@@ -114,10 +167,37 @@ class PairsTradingSystem:
             except Exception as e:
                 logger.error(f"Error checking {pair.pair_id}: {e}")
         
+        # Log z-score summary
+        if zscore_summary:
+            # Sort by absolute z-score (closest to entry threshold first)
+            zscore_summary.sort(key=lambda x: abs(abs(x["zscore"]) - config.signal.zscore_entry))
+            
+            logger.info("=" * 50)
+            logger.info("Z-SCORE SUMMARY (sorted by proximity to entry)")
+            logger.info("-" * 50)
+            
+            for item in zscore_summary:
+                z = item["zscore"]
+                pair = item["pair"]
+                
+                # Status indicator
+                if z <= -config.signal.zscore_entry:
+                    status = "🟢 LONG"
+                elif z >= config.signal.zscore_entry:
+                    status = "🔴 SHORT"
+                elif abs(z) >= config.signal.zscore_entry * 0.8:  # Within 80% of entry
+                    status = "⚠️  WATCH"
+                else:
+                    status = "⚪ neutral"
+                
+                logger.info(f"  {pair:25} z={z:+6.2f}  {status}")
+            
+            logger.info("=" * 50)
+        
         if signals_generated:
-            logger.info(f"Generated {len(signals_generated)} signals")
-        else:
-            logger.debug("No signals generated")
+            logger.info(f"🔔 Generated {len(signals_generated)} signal(s)!")
+            for s in signals_generated:
+                logger.info(f"   → {s.signal_type.value}: {s.pair_id}")
         
         return signals_generated
     
@@ -284,6 +364,11 @@ def cli():
         help="Command to execute"
     )
     parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Scan all possible combinations (not just predefined pairs)"
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug logging"
@@ -315,13 +400,34 @@ def cli():
         asyncio.run(system.run())
     
     elif args.command == "scan":
-        # Run scan only
         scanner = PairsScanner()
-        result = scanner.scan_predefined_pairs()
-        print(f"\nScan complete:")
-        print(f"  Scanned: {result.pairs_scanned}")
-        print(f"  Cointegrated: {result.cointegrated_found}")
-        print(f"  New: {result.new_pairs}")
+        
+        if args.full:
+            # Full scan of all universes
+            print("Starting FULL scan of all universes...")
+            print("This may take 10-30 minutes depending on network speed.\n")
+            results = scanner.scan_all_universes()
+            
+            total_scanned = sum(r.pairs_scanned for r in results.values())
+            total_coint = sum(r.cointegrated_found for r in results.values())
+            total_new = sum(r.new_pairs for r in results.values())
+            
+            print(f"\n{'='*50}")
+            print(f"FULL SCAN COMPLETE")
+            print(f"{'='*50}")
+            for universe, result in results.items():
+                if result.cointegrated_found > 0:
+                    print(f"  {universe}: {result.cointegrated_found} cointegrated / {result.pairs_scanned} scanned")
+            print(f"{'='*50}")
+            print(f"TOTAL: {total_coint} cointegrated / {total_scanned} scanned")
+            print(f"NEW PAIRS: {total_new}")
+        else:
+            # Predefined pairs only
+            result = scanner.scan_predefined_pairs()
+            print(f"\nScan complete:")
+            print(f"  Scanned: {result.pairs_scanned}")
+            print(f"  Cointegrated: {result.cointegrated_found}")
+            print(f"  New: {result.new_pairs}")
         
         # Show top pairs
         print("\nTop pairs:")

@@ -22,3 +22,7 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Cache & Backups
+data_cache/
+backups/

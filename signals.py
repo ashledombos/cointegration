@@ -50,6 +50,7 @@ class Signal:
     price2: Optional[float] = None
     reason: str = ""
     scale_level: int = 0  # Niveau de scaling (1, 2, 3...)
+    half_life: float = 10.0  # Half-life par défaut
     
     def to_dict(self) -> dict:
         return {
@@ -190,7 +191,8 @@ class SignalGenerator:
                 hedge_ratio=coint_result.hedge_ratio,
                 timestamp=now,
                 reason=f"Z-score {current_zscore:.2f} <= -{self.config.zscore_entry}",
-                scale_level=1
+                scale_level=1,
+                half_life=coint_result.half_life
             )
         
         elif current_zscore >= self.config.zscore_entry:
@@ -203,7 +205,8 @@ class SignalGenerator:
                 hedge_ratio=coint_result.hedge_ratio,
                 timestamp=now,
                 reason=f"Z-score {current_zscore:.2f} >= {self.config.zscore_entry}",
-                scale_level=1
+                scale_level=1,
+                half_life=coint_result.half_life
             )
         
         return None

@@ -1,9 +1,10 @@
 """
-Alerts Module - Notifications Telegram et Discord
-===================================================
+Alerts Module - Notifications Telegram, Discord et Ntfy
+=========================================================
 """
 
 import asyncio
+import requests
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
@@ -121,41 +122,98 @@ class TelegramNotifier:
         }
         emoji = emoji_map.get(signal.signal_type, "📊")
         
-        lines = [
-            f"{emoji} *PAIRS TRADING SIGNAL*",
-            f"",
-            f"*Type:* `{signal.signal_type.value}`",
-            f"*Pair:* {signal.symbol1} / {signal.symbol2}",
-            f"*Z-Score:* {signal.zscore:.2f}",
-            f"*Hedge Ratio:* {signal.hedge_ratio:.4f}",
+        # Determine if entry or exit
+        is_entry = signal.signal_type in [
+            SignalType.OPEN_LONG_SPREAD, SignalType.OPEN_SHORT_SPREAD,
+            SignalType.SCALE_IN_LONG, SignalType.SCALE_IN_SHORT
+        ]
+        is_exit = signal.signal_type in [
+            SignalType.CLOSE_LONG_SPREAD, SignalType.CLOSE_SHORT_SPREAD,
+            SignalType.STOP_LOSS, SignalType.TIME_EXIT, SignalType.BREAKDOWN_EXIT
         ]
         
-        if signal.price1 and signal.price2:
-            lines.append(f"*Prices:* {signal.price1:.4f} / {signal.price2:.4f}")
-        
-        if signal.scale_level > 0:
-            lines.append(f"*Scale Level:* {signal.scale_level}")
-        
-        if signal.reason:
-            lines.append(f"*Reason:* {signal.reason}")
-        
-        lines.append(f"*Time:* {signal.timestamp.strftime('%Y-%m-%d %H:%M UTC')}")
-        
-        # Actions
+        # Header
         if signal.signal_type in [SignalType.OPEN_LONG_SPREAD, SignalType.SCALE_IN_LONG]:
-            lines.extend([
-                "",
-                "📌 *Action:*",
-                f"• LONG {signal.symbol1}",
-                f"• SHORT {signal.symbol2} × {signal.hedge_ratio:.3f}"
-            ])
+            header = f"{emoji} *ENTRY LONG SPREAD*"
         elif signal.signal_type in [SignalType.OPEN_SHORT_SPREAD, SignalType.SCALE_IN_SHORT]:
+            header = f"{emoji} *ENTRY SHORT SPREAD*"
+        elif signal.signal_type == SignalType.STOP_LOSS:
+            header = f"{emoji} *STOP LOSS - EXIT NOW*"
+        elif signal.signal_type == SignalType.TIME_EXIT:
+            header = f"{emoji} *TIME EXIT - CLOSE POSITIONS*"
+        elif signal.signal_type == SignalType.BREAKDOWN_EXIT:
+            header = f"{emoji} *BREAKDOWN - EXIT*"
+        else:
+            header = f"{emoji} *EXIT SIGNAL*"
+        
+        lines = [
+            header,
+            "━" * 28,
+            f"*Paire:* `{signal.symbol1}` / `{signal.symbol2}`",
+            f"*Z-Score:* `{signal.zscore:.2f}`",
+        ]
+        
+        if is_entry:
+            # Calculate position sizing
+            # Base: 1 lot for first instrument, hedge_ratio for second
+            base_lots = 1.0
+            hedge_lots = abs(signal.hedge_ratio * base_lots)
+            
+            # For very small hedge ratios (like EURGBP/EURJPY), adjust
+            if hedge_lots < 0.01:
+                # Inverse: use second as base
+                hedge_lots = 1.0
+                base_lots = 1.0 / abs(signal.hedge_ratio) if signal.hedge_ratio != 0 else 1.0
+            
+            if signal.signal_type in [SignalType.OPEN_LONG_SPREAD, SignalType.SCALE_IN_LONG]:
+                action1, action2 = "BUY", "SELL"
+            else:
+                action1, action2 = "SELL", "BUY"
+            
             lines.extend([
                 "",
-                "📌 *Action:*",
-                f"• SHORT {signal.symbol1}",
-                f"• LONG {signal.symbol2} × {signal.hedge_ratio:.3f}"
+                "📊 *POSITIONS À OUVRIR:*",
+                "```",
+                f"{action1:4} {signal.symbol1:12} {base_lots:.2f} lots",
+                f"{action2:4} {signal.symbol2:12} {hedge_lots:.2f} lots",
+                "```",
+                "",
+                "⚠️ *PAS DE SL/TP INDIVIDUELS !*",
+                "_Surveiller le z-score du spread_",
+                "",
+                "📍 *SORTIES:*",
+                f"• TP: z-score → `{config.signal.zscore_exit:.1f}` (convergence)",
+                f"• SL: z-score → `±{config.signal.zscore_stop:.1f}` (divergence)",
+                f"• TIME: Sortir après `{int(signal.half_life * config.signal.max_holding_multiplier)}j` max",
+                "",
+                f"⏱ *Délai de réaction:* ~1-2h (TF 4H)",
             ])
+            
+            if signal.price1 and signal.price2:
+                lines.extend([
+                    "",
+                    f"💹 *Prix actuels:*",
+                    f"• {signal.symbol1}: `{signal.price1:.5f}`",
+                    f"• {signal.symbol2}: `{signal.price2:.5f}`",
+                ])
+        
+        elif is_exit:
+            lines.extend([
+                "",
+                "🚨 *ACTION:* Fermer les 2 positions",
+                "",
+                f"• Fermer {signal.symbol1}",
+                f"• Fermer {signal.symbol2}",
+            ])
+            
+            if signal.reason:
+                lines.append(f"\n📝 *Raison:* {signal.reason}")
+        
+        lines.extend([
+            "",
+            "━" * 28,
+            f"🕐 {signal.timestamp.strftime('%Y-%m-%d %H:%M')} UTC",
+        ])
         
         return "\n".join(lines)
     
@@ -279,12 +337,170 @@ class DiscordNotifier:
         return embed
 
 
+class NtfyNotifier:
+    """Envoi de notifications via Ntfy (léger, idéal pour mobile)."""
+    
+    def __init__(self, topic: str, server: str = "https://ntfy.sh"):
+        self.topic = topic
+        self.server = server.rstrip("/")
+        self.url = f"{self.server}/{self.topic}"
+        self.cooldown = AlertCooldown(cooldown_minutes=config.signal.alert_cooldown_minutes)
+    
+    def send_signal(self, signal: Signal) -> bool:
+        """Envoie un signal via Ntfy."""
+        if not self.cooldown.can_send(signal.pair_id):
+            return False
+        
+        message = self._format_signal(signal)
+        title = self._get_title(signal)
+        tags = self._get_tags(signal)
+        priority = self._get_priority(signal)
+        
+        try:
+            response = requests.post(
+                self.url,
+                data=message.encode('utf-8'),
+                headers={
+                    "Title": title,
+                    "Tags": tags,
+                    "Priority": priority,
+                }
+            )
+            if response.status_code == 200:
+                self.cooldown.mark_sent(signal.pair_id)
+                logger.info(f"Ntfy alert sent: {signal.signal_type.value}")
+                return True
+            else:
+                logger.error(f"Ntfy error: {response.status_code}")
+                return False
+        except Exception as e:
+            logger.error(f"Ntfy error: {e}")
+            return False
+    
+    def send_message(self, text: str, title: str = "Pairs Trading", tags: str = "chart_with_upwards_trend", priority: str = "default") -> bool:
+        """Envoie un message simple."""
+        try:
+            response = requests.post(
+                self.url,
+                data=text.encode('utf-8'),
+                headers={
+                    "Title": title,
+                    "Tags": tags,
+                    "Priority": priority,
+                }
+            )
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"Ntfy error: {e}")
+            return False
+    
+    def send_daily_report(self, report: Dict) -> bool:
+        """Envoie le rapport quotidien."""
+        message = self._format_daily_report(report)
+        return self.send_message(message, title="📊 Daily Report", tags="bar_chart")
+    
+    def _get_title(self, signal: Signal) -> str:
+        titles = {
+            SignalType.OPEN_LONG_SPREAD: f"🟢 LONG {signal.symbol1}/{signal.symbol2}",
+            SignalType.OPEN_SHORT_SPREAD: f"🔴 SHORT {signal.symbol1}/{signal.symbol2}",
+            SignalType.CLOSE_LONG_SPREAD: f"✅ EXIT {signal.symbol1}/{signal.symbol2}",
+            SignalType.CLOSE_SHORT_SPREAD: f"✅ EXIT {signal.symbol1}/{signal.symbol2}",
+            SignalType.STOP_LOSS: f"🛑 STOP {signal.symbol1}/{signal.symbol2}",
+            SignalType.TIME_EXIT: f"⏰ TIME EXIT {signal.symbol1}/{signal.symbol2}",
+            SignalType.BREAKDOWN_EXIT: f"⚠️ BREAKDOWN {signal.symbol1}/{signal.symbol2}",
+            SignalType.SCALE_IN_LONG: f"📈 SCALE {signal.symbol1}/{signal.symbol2}",
+            SignalType.SCALE_IN_SHORT: f"📉 SCALE {signal.symbol1}/{signal.symbol2}",
+        }
+        return titles.get(signal.signal_type, f"📊 {signal.pair_id}")
+    
+    def _get_tags(self, signal: Signal) -> str:
+        tags_map = {
+            SignalType.OPEN_LONG_SPREAD: "green_circle,chart_with_upwards_trend",
+            SignalType.OPEN_SHORT_SPREAD: "red_circle,chart_with_downwards_trend",
+            SignalType.STOP_LOSS: "rotating_light,warning",
+            SignalType.BREAKDOWN_EXIT: "warning,x",
+        }
+        return tags_map.get(signal.signal_type, "bell")
+    
+    def _get_priority(self, signal: Signal) -> str:
+        if signal.signal_type == SignalType.STOP_LOSS:
+            return "urgent"
+        elif signal.signal_type in [SignalType.OPEN_LONG_SPREAD, SignalType.OPEN_SHORT_SPREAD]:
+            return "high"
+        elif signal.signal_type == SignalType.BREAKDOWN_EXIT:
+            return "high"
+        return "default"
+    
+    def _format_signal(self, signal: Signal) -> str:
+        """Format compact pour mobile avec position sizing."""
+        is_entry = signal.signal_type in [
+            SignalType.OPEN_LONG_SPREAD, SignalType.OPEN_SHORT_SPREAD,
+            SignalType.SCALE_IN_LONG, SignalType.SCALE_IN_SHORT
+        ]
+        
+        lines = [f"Z-Score: {signal.zscore:.2f}"]
+        
+        if is_entry:
+            # Position sizing basé sur le capital configuré
+            account_size = config.trading.account_size
+            risk_pct = config.trading.risk_per_trade
+            risk_amount = account_size * risk_pct
+            
+            # Calcul des lots basé sur le hedge ratio
+            # Ratio de lots: lots2 = lots1 * hedge_ratio
+            base_lots = 1.0
+            hedge_lots = abs(signal.hedge_ratio * base_lots)
+            
+            # Ajuster si hedge_ratio très faible
+            if hedge_lots < 0.01:
+                hedge_lots = 1.0
+                base_lots = 1.0 / abs(signal.hedge_ratio) if signal.hedge_ratio != 0 else 1.0
+            
+            # Arrondir à 2 décimales
+            base_lots = round(base_lots, 2)
+            hedge_lots = round(hedge_lots, 2)
+            
+            if signal.signal_type in [SignalType.OPEN_LONG_SPREAD, SignalType.SCALE_IN_LONG]:
+                action1, action2 = "BUY", "SELL"
+            else:
+                action1, action2 = "SELL", "BUY"
+            
+            lines.extend([
+                "",
+                f"💰 Capital: {account_size:,.0f}",
+                f"⚠️  Risque: {risk_pct*100:.1f}% ({risk_amount:,.0f})",
+                "",
+                f"{action1} {signal.symbol1}: {base_lots:.2f} lots",
+                f"{action2} {signal.symbol2}: {hedge_lots:.2f} lots",
+                "",
+                f"TP: z → ±{config.signal.zscore_exit}",
+                f"SL: z → ±{config.signal.zscore_stop}",
+                f"Max: {int(signal.half_life * 2)}j",
+            ])
+        else:
+            lines.extend([
+                "",
+                "FERMER les 2 positions",
+                f"Raison: {signal.reason}" if signal.reason else "",
+            ])
+        
+        return "\n".join(filter(None, lines))
+    
+    def _format_daily_report(self, report: Dict) -> str:
+        return (
+            f"Paires actives: {report.get('active_pairs', 0)}\n"
+            f"Positions: {report.get('open_positions', 0)}\n"
+            f"Signaux 24h: {report.get('signals_today', 0)}"
+        )
+
+
 class AlertManager:
     """Gestionnaire centralisé des alertes."""
     
     def __init__(self):
         self.telegram: Optional[TelegramNotifier] = None
         self.discord: Optional[DiscordNotifier] = None
+        self.ntfy: Optional[NtfyNotifier] = None
         
         # Initialize Telegram
         if config.alert.telegram_enabled and config.alert.telegram_bot_token:
@@ -304,6 +520,17 @@ class AlertManager:
                 logger.info("Discord notifier initialized")
             except Exception as e:
                 logger.error(f"Discord init error: {e}")
+        
+        # Initialize Ntfy
+        if config.alert.ntfy_enabled and config.alert.ntfy_topic:
+            try:
+                self.ntfy = NtfyNotifier(
+                    config.alert.ntfy_topic,
+                    config.alert.ntfy_server
+                )
+                logger.info(f"Ntfy notifier initialized (topic: {config.alert.ntfy_topic})")
+            except Exception as e:
+                logger.error(f"Ntfy init error: {e}")
     
     async def send_signal(self, signal: Signal):
         """Envoie un signal via tous les canaux configurés."""
@@ -316,6 +543,10 @@ class AlertManager:
         if self.discord:
             result = self.discord.send_signal(signal)
             results.append(("discord", result))
+        
+        if self.ntfy:
+            result = self.ntfy.send_signal(signal)
+            results.append(("ntfy", result))
         
         return results
     
@@ -331,6 +562,10 @@ class AlertManager:
             result = self.discord.send_daily_report(report)
             results.append(("discord", result))
         
+        if self.ntfy:
+            result = self.ntfy.send_daily_report(report)
+            results.append(("ntfy", result))
+        
         return results
     
     async def send_message(self, text: str):
@@ -344,6 +579,10 @@ class AlertManager:
         if self.discord:
             result = self.discord.send_message(text)
             results.append(("discord", result))
+        
+        if self.ntfy:
+            result = self.ntfy.send_message(text)
+            results.append(("ntfy", result))
         
         return results
 

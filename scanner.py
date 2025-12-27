@@ -13,8 +13,9 @@ from loguru import logger
 
 from config import (
     config, 
-    FOREX_UNIVERSE, INDICES_UNIVERSE, COMMODITIES_UNIVERSE,
-    SECTORS_UNIVERSE, CRYPTO_UNIVERSE, PREDEFINED_PAIRS
+    FTMO_FOREX, FTMO_INDICES, FTMO_COMMODITIES, FTMO_METALS,
+    FTMO_CRYPTO, FTMO_STOCKS, PREDEFINED_PAIRS,
+    ftmo_to_yfinance
 )
 from data_fetcher import DataFetcher
 from cointegration import CointegrationAnalyzer, CointegrationResult
@@ -307,7 +308,7 @@ class PairsScanner:
         # Forex
         logger.info("=== Scanning Forex ===")
         results["forex"] = self.scan_universe(
-            FOREX_UNIVERSE, 
+            FTMO_FOREX, 
             lookback_days=lookback_days,
             max_pairs=50
         )
@@ -315,27 +316,34 @@ class PairsScanner:
         # Indices
         logger.info("=== Scanning Indices ===")
         results["indices"] = self.scan_universe(
-            INDICES_UNIVERSE,
+            FTMO_INDICES,
             lookback_days=lookback_days,
             max_pairs=50
         )
         
-        # Commodities
-        logger.info("=== Scanning Commodities ===")
+        # Commodities + Metals
+        logger.info("=== Scanning Commodities & Metals ===")
         results["commodities"] = self.scan_universe(
-            COMMODITIES_UNIVERSE,
+            FTMO_COMMODITIES + FTMO_METALS,
             lookback_days=lookback_days,
-            max_pairs=20
+            max_pairs=30
         )
         
-        # Sectors (intra-sector pairs)
-        for sector_name, symbols in SECTORS_UNIVERSE.items():
-            logger.info(f"=== Scanning Sector: {sector_name} ===")
-            results[f"sector_{sector_name}"] = self.scan_universe(
-                symbols,
-                lookback_days=lookback_days,
-                max_pairs=30
-            )
+        # Crypto
+        logger.info("=== Scanning Crypto ===")
+        results["crypto"] = self.scan_universe(
+            FTMO_CRYPTO,
+            lookback_days=lookback_days,
+            max_pairs=30
+        )
+        
+        # Stocks
+        logger.info("=== Scanning Stocks ===")
+        results["stocks"] = self.scan_universe(
+            FTMO_STOCKS,
+            lookback_days=lookback_days,
+            max_pairs=30
+        )
         
         # Summary
         total_scanned = sum(r.pairs_scanned for r in results.values())

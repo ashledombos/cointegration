@@ -23,7 +23,7 @@ try:
 except ImportError:
     ccxt = None
 
-from config import config
+from config import config, ftmo_to_yfinance, yfinance_to_ftmo, FTMO_TO_YFINANCE
 
 
 class DataCache:
@@ -191,9 +191,18 @@ class DataFetcher:
             self.ccxt_fetcher = CCXTFetcher(config.data.ccxt_exchange)
     
     def _detect_source(self, symbol: str) -> str:
-        if "/" in symbol:
+        """Détecte la source appropriée selon le format du symbole."""
+        if "/" in symbol:  # Format CCXT: BTC/USDT
             return "ccxt"
         return "yfinance"
+    
+    def _convert_symbol(self, ftmo_symbol: str) -> str:
+        """Convertit un symbole FTMO en symbole yfinance si nécessaire."""
+        # Si c'est un symbole FTMO connu, le convertir
+        if ftmo_symbol in FTMO_TO_YFINANCE:
+            return ftmo_to_yfinance(ftmo_symbol)
+        # Sinon, retourner tel quel
+        return ftmo_symbol
     
     def fetch_single(
         self,
@@ -202,9 +211,17 @@ class DataFetcher:
         timeframe: Optional[str] = None,
         use_cache: bool = True
     ) -> Optional[pd.DataFrame]:
+        """
+        Récupère les données pour un symbole.
+        Accepte les symboles FTMO (ex: US500.cash) ou yfinance (ex: SPY).
+        """
         lookback = lookback_days or config.data.lookback_days
         tf = timeframe or config.data.timeframe
         
+        # Convertir symbole FTMO -> yfinance si nécessaire
+        yf_symbol = self._convert_symbol(symbol)
+        
+        # Cache utilise le symbole original (FTMO) pour cohérence
         if use_cache:
             cached = self.cache.get(symbol, tf)
             if cached is not None:
@@ -213,16 +230,18 @@ class DataFetcher:
         end_date = datetime.now()
         start_date = end_date - timedelta(days=lookback)
         
-        source = self._detect_source(symbol)
+        # Utiliser le symbole converti pour le fetch
+        source = self._detect_source(yf_symbol)
         
         if source == "ccxt" and self.ccxt_fetcher:
-            df = self.ccxt_fetcher.fetch(symbol, start_date, end_date, tf)
+            df = self.ccxt_fetcher.fetch(yf_symbol, start_date, end_date, tf)
         elif self.yf_fetcher:
-            df = self.yf_fetcher.fetch(symbol, start_date, end_date, tf)
+            df = self.yf_fetcher.fetch(yf_symbol, start_date, end_date, tf)
         else:
-            logger.error(f"Aucune source pour {symbol}")
+            logger.error(f"Aucune source pour {symbol} (-> {yf_symbol})")
             return None
         
+        # Cache utilise le symbole original (FTMO)
         if df is not None and use_cache:
             self.cache.set(symbol, tf, df)
         
@@ -286,8 +305,19 @@ if __name__ == "__main__":
     
     fetcher = DataFetcher()
     
-    # Test
-    df = fetcher.fetch_single("SPY", lookback_days=365)
-    if df is not None:
-        print(f"SPY: {len(df)} rows")
-        print(df.tail())
+    # Test avec symbole FTMO
+    print("=== Test symboles FTMO ===")
+    test_symbols = [
+        ("US500.cash", "S&P 500"),
+        ("EURUSD", "EUR/USD"),
+        ("XAUUSD", "Gold"),
+    ]
+    
+    for ftmo_sym, desc in test_symbols:
+        yf_sym = ftmo_to_yfinance(ftmo_sym)
+        print(f"\n{ftmo_sym} ({desc}) -> {yf_sym}")
+        df = fetcher.fetch_single(ftmo_sym, lookback_days=30)
+        if df is not None:
+            print(f"  {len(df)} rows, last close: {df['close'].iloc[-1]:.2f}")
+        else:
+            print(f"  FAILED")
