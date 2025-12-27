@@ -1,0 +1,31 @@
+[Unit]
+Description=Pairs Trading Cointegration Bot
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=raphael
+Group=raphael
+WorkingDirectory=/home/raphael/dev/cointegration
+ExecStart=/home/raphael/dev/cointegration/run_bot.sh
+Restart=always
+RestartSec=30
+
+# Environnement
+Environment=PYTHONUNBUFFERED=1
+
+# Logs via journald (loguru gère les fichiers)
+StandardOutput=journal
+StandardError=journal
+
+# Sécurité
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/raphael/dev/cointegration
+
+[Install]
+WantedBy=multi-user.target
