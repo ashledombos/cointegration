@@ -210,11 +210,17 @@ Si beaucoup de paires échouent, vérifier :
 - Période de lookback suffisante (≥100 observations)
 - Alignement des timestamps entre les séries
 
-## 📚 Références
+## 📚 Crédits & Références
 
+**Inspiration**
+- [CryptoWizards](https://cryptowizards.net/) - Concept original du bot de pairs trading par coïntégration
+
+**Développement**
+- Code développé en majorité par [Claude](https://claude.ai) (Anthropic) via vibe coding
+
+**Références académiques**
 - Engle, R. F., & Granger, C. W. (1987). Co-integration and error correction
 - Gatev, E., Goetzmann, W. N., & Rouwenhorst, K. G. (2006). Pairs trading
-- [ArbirageLab Documentation](https://hudson-and-thames-arbitragelab.readthedocs-hosted.com/)
 
 ## 📄 Licence
 
