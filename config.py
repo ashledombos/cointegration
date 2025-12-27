@@ -294,6 +294,7 @@ class CointegrationConfig:
 class SignalConfig:
     zscore_entry: float = 2.0
     zscore_exit: float = 1.0
+    zscore_warning: float = 2.5  # Alerte intermédiaire avant stop
     zscore_stop: float = 3.0
     scale_in: bool = True
     scale_levels: List[float] = field(default_factory=lambda: [2.0, 2.5, 3.0])
@@ -327,71 +328,177 @@ class AlertConfig:
 class TradingConfig:
     """Configuration du compte de trading FTMO."""
     account_size: float = field(default_factory=lambda: float(os.getenv("FTMO_ACCOUNT_SIZE", "100000")))
+    account_currency: str = field(default_factory=lambda: os.getenv("FTMO_ACCOUNT_CURRENCY", "USD"))
     risk_per_trade: float = field(default_factory=lambda: float(os.getenv("FTMO_RISK_PER_TRADE", "0.015")))
     max_daily_risk: float = field(default_factory=lambda: float(os.getenv("FTMO_MAX_DAILY_RISK", "0.04")))
+    leverage: int = field(default_factory=lambda: int(os.getenv("FTMO_LEVERAGE", "30")))  # Swing = 1:30
     
-    # Pip values approximatives pour les paires majeures (1 lot standard)
-    # Ces valeurs sont en USD pour 1 pip de mouvement avec 1 lot
-    pip_values: dict = field(default_factory=lambda: {
-        # Forex (1 lot = 100,000 unités)
-        "EURUSD": 10.0, "GBPUSD": 10.0, "AUDUSD": 10.0, "NZDUSD": 10.0,
-        "USDCHF": 10.0, "USDCAD": 10.0, "USDJPY": 6.5,
-        "EURJPY": 6.5, "GBPJPY": 6.5, "AUDJPY": 6.5, "CADJPY": 6.5, "NZDJPY": 6.5,
-        "EURGBP": 12.5, "EURAUD": 6.5, "EURNZD": 6.0, "EURCHF": 10.5,
-        "GBPAUD": 6.5, "GBPNZD": 6.0, "GBPCAD": 7.5, "GBPCHF": 10.5,
-        "AUDNZD": 6.0, "AUDCAD": 7.5, "AUDCHF": 10.5,
-        "NZDCAD": 7.5, "NZDCHF": 10.5, "CADCHF": 10.5,
-        # Indices (valeur par point, varie selon broker)
-        "US500.cash": 10.0, "US100.cash": 10.0, "US30.cash": 10.0,
-        "UK100.cash": 10.0, "GER40.cash": 10.0, "FRA40.cash": 10.0,
-        "EU50.cash": 10.0, "SPN35.cash": 10.0, "HK50.cash": 10.0,
-        # Métaux (1 lot = 100 oz pour or, 5000 oz pour argent)
-        "XAUUSD": 10.0, "XAGUSD": 50.0,
-        # Crypto (varie énormément)
-        "BTCUSD": 1.0, "ETHUSD": 1.0,
+    # Specs FTMO par instrument
+    # contract_size: taille du contrat (forex=100000, indices=1, crypto=1)
+    # pip_size: taille d'un pip (forex=0.0001, JPY=0.01, indices=1)
+    # pip_value_per_lot: valeur en USD d'1 pip pour 1 lot standard
+    instrument_specs: dict = field(default_factory=lambda: {
+        # Forex majeurs (1 lot = 100,000 unités, pip = 0.0001)
+        "EURUSD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.0, "margin_currency": "EUR"},
+        "GBPUSD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.0, "margin_currency": "GBP"},
+        "AUDUSD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.0, "margin_currency": "AUD"},
+        "NZDUSD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.0, "margin_currency": "NZD"},
+        "USDCHF": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.0, "margin_currency": "USD"},
+        "USDCAD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 7.5, "margin_currency": "USD"},
+        "USDPLN": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 2.5, "margin_currency": "USD"},
+        # Forex JPY (pip = 0.01)
+        "USDJPY": {"contract_size": 100000, "pip_size": 0.01, "pip_value": 6.5, "margin_currency": "USD"},
+        "EURJPY": {"contract_size": 100000, "pip_size": 0.01, "pip_value": 6.5, "margin_currency": "EUR"},
+        "GBPJPY": {"contract_size": 100000, "pip_size": 0.01, "pip_value": 6.5, "margin_currency": "GBP"},
+        "AUDJPY": {"contract_size": 100000, "pip_size": 0.01, "pip_value": 6.5, "margin_currency": "AUD"},
+        "CADJPY": {"contract_size": 100000, "pip_size": 0.01, "pip_value": 6.5, "margin_currency": "CAD"},
+        "NZDJPY": {"contract_size": 100000, "pip_size": 0.01, "pip_value": 6.5, "margin_currency": "NZD"},
+        "CHFJPY": {"contract_size": 100000, "pip_size": 0.01, "pip_value": 6.5, "margin_currency": "CHF"},
+        # Forex crosses
+        "EURGBP": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 12.5, "margin_currency": "EUR"},
+        "EURAUD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 6.5, "margin_currency": "EUR"},
+        "EURNZD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 6.0, "margin_currency": "EUR"},
+        "EURCHF": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.5, "margin_currency": "EUR"},
+        "EURCZK": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 4.0, "margin_currency": "EUR"},
+        "GBPAUD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 6.5, "margin_currency": "GBP"},
+        "GBPNZD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 6.0, "margin_currency": "GBP"},
+        "GBPCAD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 7.5, "margin_currency": "GBP"},
+        "GBPCHF": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.5, "margin_currency": "GBP"},
+        "AUDNZD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 6.0, "margin_currency": "AUD"},
+        "AUDCAD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 7.5, "margin_currency": "AUD"},
+        "AUDCHF": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.5, "margin_currency": "AUD"},
+        "NZDCAD": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 7.5, "margin_currency": "NZD"},
+        "NZDCHF": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.5, "margin_currency": "NZD"},
+        "CADCHF": {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.5, "margin_currency": "CAD"},
+        # Indices FTMO (contract_size = 1 depuis sept 2022)
+        "US500.cash": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "USD"},
+        "US100.cash": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "USD"},
+        "US30.cash": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "USD"},
+        "UK100.cash": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "GBP"},
+        "GER40.cash": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "EUR"},
+        "FRA40.cash": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "EUR"},
+        "EU50.cash": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "EUR"},
+        "SPN35.cash": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "EUR"},
+        "HK50.cash": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "HKD"},
+        "JP225.cash": {"contract_size": 1, "pip_size": 1.0, "pip_value": 0.01, "margin_currency": "JPY"},
+        # Métaux
+        "XAUUSD": {"contract_size": 100, "pip_size": 0.01, "pip_value": 1.0, "margin_currency": "USD"},
+        "XAGUSD": {"contract_size": 5000, "pip_size": 0.001, "pip_value": 5.0, "margin_currency": "USD"},
+        # Commodities
+        "USOIL.cash": {"contract_size": 100, "pip_size": 0.01, "pip_value": 1.0, "margin_currency": "USD"},
+        "UKOIL.cash": {"contract_size": 100, "pip_size": 0.01, "pip_value": 1.0, "margin_currency": "USD"},
+        "COTTON.c": {"contract_size": 1000, "pip_size": 0.01, "pip_value": 10.0, "margin_currency": "USD"},
+        "XCUUSD": {"contract_size": 1000, "pip_size": 0.0001, "pip_value": 0.1, "margin_currency": "USD"},
+        # Crypto (contract_size = 1)
+        "BTCUSD": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "USD"},
+        "ETHUSD": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "USD"},
+        "XRPUSD": {"contract_size": 1, "pip_size": 0.0001, "pip_value": 0.0001, "margin_currency": "USD"},
+        "AVAUSD": {"contract_size": 1, "pip_size": 0.01, "pip_value": 0.01, "margin_currency": "USD"},
     })
     
-    def get_pip_value(self, symbol: str) -> float:
-        """Retourne la valeur du pip pour un symbole."""
-        return self.pip_values.get(symbol, 10.0)  # Défaut 10 USD
+    def get_specs(self, symbol: str) -> dict:
+        """Retourne les specs d'un instrument."""
+        default = {"contract_size": 100000, "pip_size": 0.0001, "pip_value": 10.0, "margin_currency": "USD"}
+        return self.instrument_specs.get(symbol, default)
     
-    def calculate_position_size(self, symbol1: str, symbol2: str, hedge_ratio: float, spread_std: float) -> dict:
+    def calculate_margin(self, symbol: str, lots: float, price: float) -> float:
+        """Calcule la marge requise pour une position."""
+        specs = self.get_specs(symbol)
+        # Marge = lots * contract_size * price / leverage
+        margin = lots * specs["contract_size"] * price / self.leverage
+        return round(margin, 2)
+    
+    def calculate_lots_from_risk(self, symbol: str, risk_amount: float, stop_pips: float) -> float:
         """
-        Calcule la taille de position basée sur le risque.
+        Calcule les lots basés sur le risque et le stop en pips.
         
         Args:
-            symbol1: Premier symbole
-            symbol2: Second symbole
-            hedge_ratio: Ratio de hedge
-            spread_std: Écart-type du spread (en unités de prix)
+            symbol: Symbole FTMO
+            risk_amount: Montant à risquer en USD
+            stop_pips: Distance du stop en pips
         
         Returns:
-            dict avec lots1, lots2, risk_amount
+            Nombre de lots (arrondi à 0.01)
+        """
+        specs = self.get_specs(symbol)
+        pip_value = specs["pip_value"]
+        
+        if pip_value <= 0 or stop_pips <= 0:
+            return 0.01
+        
+        # lots = risk / (stop_pips * pip_value_per_lot)
+        lots = risk_amount / (stop_pips * pip_value)
+        lots = round(lots, 2)
+        lots = max(0.01, min(lots, 50.0))  # FTMO limits
+        return lots
+    
+    def calculate_position_for_pair(
+        self, 
+        symbol1: str, 
+        symbol2: str, 
+        hedge_ratio: float,
+        spread_std: float,
+        price1: float,
+        price2: float
+    ) -> dict:
+        """
+        Calcule les positions pour une paire coïntégrée.
+        
+        Returns:
+            dict avec lots1, lots2, margin1, margin2, risk_amount, etc.
         """
         risk_amount = self.account_size * self.risk_per_trade
+        specs1 = self.get_specs(symbol1)
+        specs2 = self.get_specs(symbol2)
         
-        # Le risque est basé sur 1 écart-type de mouvement du spread
-        # Stop loss à z=3 quand entry à z=2 = 1 écart-type
-        pip_value1 = self.get_pip_value(symbol1)
-        pip_value2 = self.get_pip_value(symbol2)
+        # Pour pairs trading, le "stop" est 1 écart-type du spread (z=2 → z=3)
+        # On simplifie en utilisant un ratio fixe basé sur le risque
+        # lots1 tel que mouvement de 1 spread_std = risk_amount
         
-        # Simplification: on considère le risque principalement sur la leg 1
-        # car c'est généralement la plus grosse position
-        if spread_std > 0 and pip_value1 > 0:
-            lots1 = risk_amount / (spread_std * pip_value1 * 100)  # *100 car spread_std en prix
-            lots1 = round(lots1, 2)
-            lots1 = max(0.01, min(lots1, 50.0))  # Min 0.01, max 50 lots FTMO
+        # Approximation: spread_std en unités de prix du premier actif
+        pip_value1 = specs1["pip_value"]
+        pip_size1 = specs1["pip_size"]
+        
+        # Convertir spread_std en pips
+        if pip_size1 > 0:
+            stop_pips = spread_std / pip_size1
         else:
-            lots1 = 0.10  # Défaut conservateur
+            stop_pips = 100  # Défaut
         
+        # Calculer lots1 basé sur le risque
+        if stop_pips > 0 and pip_value1 > 0:
+            lots1 = risk_amount / (stop_pips * pip_value1)
+        else:
+            lots1 = 0.10
+        
+        lots1 = round(lots1, 2)
+        lots1 = max(0.01, min(lots1, 50.0))
+        
+        # lots2 basé sur hedge ratio
         lots2 = round(abs(lots1 * hedge_ratio), 2)
         lots2 = max(0.01, min(lots2, 50.0))
+        
+        # Si hedge_ratio très faible, inverser la logique
+        if abs(hedge_ratio) < 0.1:
+            lots2 = 1.0
+            lots1 = round(lots2 / abs(hedge_ratio), 2) if hedge_ratio != 0 else 1.0
+            lots1 = max(0.01, min(lots1, 50.0))
+        
+        # Calculer les marges
+        margin1 = self.calculate_margin(symbol1, lots1, price1) if price1 else 0
+        margin2 = self.calculate_margin(symbol2, lots2, price2) if price2 else 0
+        total_margin = margin1 + margin2
         
         return {
             "lots1": lots1,
             "lots2": lots2,
+            "margin1": margin1,
+            "margin2": margin2,
+            "total_margin": total_margin,
             "risk_amount": risk_amount,
-            "risk_percent": self.risk_per_trade * 100
+            "risk_percent": self.risk_per_trade * 100,
+            "account_size": self.account_size,
+            "leverage": self.leverage
         }
 
 

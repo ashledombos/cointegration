@@ -29,6 +29,7 @@ class SignalType(Enum):
     OPEN_SHORT_SPREAD = "open_short_spread"
     CLOSE_LONG_SPREAD = "close_long_spread"
     CLOSE_SHORT_SPREAD = "close_short_spread"
+    WARNING = "warning"  # z-score proche du stop (±2.5)
     STOP_LOSS = "stop_loss"
     TIME_EXIT = "time_exit"
     BREAKDOWN_EXIT = "breakdown_exit"

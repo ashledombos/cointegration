@@ -405,6 +405,7 @@ class NtfyNotifier:
             SignalType.OPEN_SHORT_SPREAD: f"🔴 SHORT {signal.symbol1}/{signal.symbol2}",
             SignalType.CLOSE_LONG_SPREAD: f"✅ EXIT {signal.symbol1}/{signal.symbol2}",
             SignalType.CLOSE_SHORT_SPREAD: f"✅ EXIT {signal.symbol1}/{signal.symbol2}",
+            SignalType.WARNING: f"⚠️ WARNING {signal.symbol1}/{signal.symbol2}",
             SignalType.STOP_LOSS: f"🛑 STOP {signal.symbol1}/{signal.symbol2}",
             SignalType.TIME_EXIT: f"⏰ TIME EXIT {signal.symbol1}/{signal.symbol2}",
             SignalType.BREAKDOWN_EXIT: f"⚠️ BREAKDOWN {signal.symbol1}/{signal.symbol2}",
@@ -417,6 +418,7 @@ class NtfyNotifier:
         tags_map = {
             SignalType.OPEN_LONG_SPREAD: "green_circle,chart_with_upwards_trend",
             SignalType.OPEN_SHORT_SPREAD: "red_circle,chart_with_downwards_trend",
+            SignalType.WARNING: "warning,eyes",
             SignalType.STOP_LOSS: "rotating_light,warning",
             SignalType.BREAKDOWN_EXIT: "warning,x",
         }
@@ -425,6 +427,8 @@ class NtfyNotifier:
     def _get_priority(self, signal: Signal) -> str:
         if signal.signal_type == SignalType.STOP_LOSS:
             return "urgent"
+        elif signal.signal_type == SignalType.WARNING:
+            return "high"
         elif signal.signal_type in [SignalType.OPEN_LONG_SPREAD, SignalType.OPEN_SHORT_SPREAD]:
             return "high"
         elif signal.signal_type == SignalType.BREAKDOWN_EXIT:
@@ -432,33 +436,45 @@ class NtfyNotifier:
         return "default"
     
     def _format_signal(self, signal: Signal) -> str:
-        """Format compact pour mobile avec position sizing."""
+        """Format compact pour mobile avec position sizing complet."""
         is_entry = signal.signal_type in [
             SignalType.OPEN_LONG_SPREAD, SignalType.OPEN_SHORT_SPREAD,
             SignalType.SCALE_IN_LONG, SignalType.SCALE_IN_SHORT
         ]
+        is_warning = signal.signal_type == SignalType.WARNING
         
-        lines = [f"Z-Score: {signal.zscore:.2f}"]
+        lines = [f"Z-Score: {signal.zscore:+.2f}"]
         
         if is_entry:
-            # Position sizing basé sur le capital configuré
-            account_size = config.trading.account_size
-            risk_pct = config.trading.risk_per_trade
-            risk_amount = account_size * risk_pct
+            # Utiliser TradingConfig pour le calcul
+            price1 = signal.price1 or 0
+            price2 = signal.price2 or 0
             
-            # Calcul des lots basé sur le hedge ratio
-            # Ratio de lots: lots2 = lots1 * hedge_ratio
-            base_lots = 1.0
-            hedge_lots = abs(signal.hedge_ratio * base_lots)
-            
-            # Ajuster si hedge_ratio très faible
-            if hedge_lots < 0.01:
-                hedge_lots = 1.0
-                base_lots = 1.0 / abs(signal.hedge_ratio) if signal.hedge_ratio != 0 else 1.0
-            
-            # Arrondir à 2 décimales
-            base_lots = round(base_lots, 2)
-            hedge_lots = round(hedge_lots, 2)
+            # Calculer position sizing si on a les prix
+            if price1 > 0 and price2 > 0:
+                pos = config.trading.calculate_position_for_pair(
+                    signal.symbol1,
+                    signal.symbol2,
+                    signal.hedge_ratio,
+                    spread_std=0.01,  # Approximation
+                    price1=price1,
+                    price2=price2
+                )
+                lots1 = pos["lots1"]
+                lots2 = pos["lots2"]
+                margin1 = pos["margin1"]
+                margin2 = pos["margin2"]
+                total_margin = pos["total_margin"]
+                risk_amount = pos["risk_amount"]
+            else:
+                # Fallback simple basé sur hedge ratio
+                lots1 = 1.0
+                lots2 = round(abs(signal.hedge_ratio), 2)
+                if lots2 < 0.01:
+                    lots2 = 1.0
+                    lots1 = round(1.0 / abs(signal.hedge_ratio), 2) if signal.hedge_ratio != 0 else 1.0
+                risk_amount = config.trading.account_size * config.trading.risk_per_trade
+                margin1 = margin2 = total_margin = 0
             
             if signal.signal_type in [SignalType.OPEN_LONG_SPREAD, SignalType.SCALE_IN_LONG]:
                 action1, action2 = "BUY", "SELL"
@@ -467,22 +483,66 @@ class NtfyNotifier:
             
             lines.extend([
                 "",
-                f"💰 Capital: {account_size:,.0f}",
-                f"⚠️  Risque: {risk_pct*100:.1f}% ({risk_amount:,.0f})",
+                f"═══ POSITION 1 ═══",
+                f"{action1} {signal.symbol1}",
+                f"Quantité: {lots1:.2f} lots",
+            ])
+            if price1 > 0:
+                lines.append(f"Prix: ~{price1:.5g}")
+            if margin1 > 0:
+                lines.append(f"Marge: ~{margin1:,.0f} USD")
+            
+            lines.extend([
                 "",
-                f"{action1} {signal.symbol1}: {base_lots:.2f} lots",
-                f"{action2} {signal.symbol2}: {hedge_lots:.2f} lots",
+                f"═══ POSITION 2 ═══",
+                f"{action2} {signal.symbol2}",
+                f"Quantité: {lots2:.2f} lots",
+            ])
+            if price2 > 0:
+                lines.append(f"Prix: ~{price2:.5g}")
+            if margin2 > 0:
+                lines.append(f"Marge: ~{margin2:,.0f} USD")
+            
+            lines.extend([
                 "",
+                f"═══ RÉSUMÉ ═══",
+                f"💰 Capital: {config.trading.account_size:,.0f}",
+                f"⚠️ Risque: {config.trading.risk_per_trade*100:.1f}% ({risk_amount:,.0f})",
+            ])
+            if total_margin > 0:
+                lines.append(f"📊 Marge totale: ~{total_margin:,.0f}")
+            
+            lines.extend([
+                "",
+                f"═══ SORTIES ═══",
                 f"TP: z → ±{config.signal.zscore_exit}",
+                f"⚠️: z → ±{config.signal.zscore_warning}",
                 f"SL: z → ±{config.signal.zscore_stop}",
                 f"Max: {int(signal.half_life * 2)}j",
             ])
-        else:
+        
+        elif is_warning:
+            # Format WARNING
+            direction = "diverge" if abs(signal.zscore) > 2.0 else "approche stop"
             lines.extend([
                 "",
-                "FERMER les 2 positions",
-                f"Raison: {signal.reason}" if signal.reason else "",
+                f"⚠️ Le spread {direction}!",
+                f"Entry était à z=±2.0",
+                f"Stop sera à z=±{config.signal.zscore_stop}",
+                "",
+                "👀 Surveiller de près",
+                "Préparer sortie manuelle si nécessaire",
             ])
+        
+        else:
+            # Format EXIT / STOP
+            lines.extend([
+                "",
+                "🚨 ACTION REQUISE",
+                "FERMER les 2 positions",
+            ])
+            if signal.reason:
+                lines.append(f"Raison: {signal.reason}")
         
         return "\n".join(filter(None, lines))
     

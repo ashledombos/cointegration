@@ -2,7 +2,23 @@
 Main Orchestrator - Système de Pairs Trading par Coïntégration
 ================================================================
 Point d'entrée principal avec scheduling des tâches.
+
+Version: 1.0.0
+Date: 2025-12-27
+
+Changelog:
+---------
+v1.0.0 (2025-12-27)
+    - Initial release
+    - Scan coïntégration multi-univers (Forex, Indices, Commodities, Crypto)
+    - Monitoring z-score avec alertes Telegram/Discord/Ntfy
+    - Position sizing basé sur capital FTMO
+    - Alertes WARNING à z=±2.5
+    - Logrotate automatique via Loguru
 """
+
+__version__ = "1.0.0"
+__author__ = "Raph"
 
 import asyncio
 import sys
@@ -314,7 +330,7 @@ class PairsTradingSystem:
     
     async def run(self):
         """Lance le système."""
-        logger.info("Starting Pairs Trading System...")
+        logger.info(f"Starting Pairs Trading System v{__version__}...")
         
         # Initial checks
         if not config.validate():
@@ -327,10 +343,11 @@ class PairsTradingSystem:
         
         # Send startup notification
         await self.alert_manager.send_message(
-            "🚀 *Pairs Trading System Started*\n"
+            f"🚀 *Pairs Trading v{__version__}*\n"
             f"• Active pairs: {len(db.get_active_pairs())}\n"
-            f"• Check interval: {config.scheduler.zscore_check_interval} min\n"
-            f"• Z-score entry: ±{config.signal.zscore_entry}"
+            f"• Capital: {config.trading.account_size:,.0f} USD\n"
+            f"• Risk/trade: {config.trading.risk_per_trade*100:.1f}%\n"
+            f"• Check interval: {config.scheduler.zscore_check_interval} min"
         )
         
         # Run initial check
@@ -360,6 +377,7 @@ def cli():
     parser = argparse.ArgumentParser(description="Pairs Trading Cointegration System")
     parser.add_argument(
         "command",
+        nargs="?",
         choices=["run", "scan", "check", "report", "init"],
         help="Command to execute"
     )
@@ -373,8 +391,17 @@ def cli():
         action="store_true",
         help="Enable debug logging"
     )
+    parser.add_argument(
+        "--version", "-v",
+        action="version",
+        version=f"%(prog)s {__version__}"
+    )
     
     args = parser.parse_args()
+    
+    if args.command is None:
+        parser.print_help()
+        sys.exit(0)
     
     # Configure logging
     logger.remove()
@@ -386,9 +413,11 @@ def cli():
     )
     logger.add(
         "logs/pairs_trading.log",
-        rotation="1 day",
-        retention="7 days",
-        level="DEBUG"
+        rotation="10 MB",  # Nouveau fichier tous les 10 MB
+        retention="7 days",  # Garde 7 jours
+        compression="gz",  # Compresse les anciens logs
+        level="DEBUG",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}"
     )
     
     # Create logs directory
