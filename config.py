@@ -131,8 +131,8 @@ FTMO_TO_YFINANCE: Dict[str, str] = {
     "ETCUSD": "ETC-USD",
     "BCHUSD": "BCH-USD",
     "XTZUSD": "XTZ-USD",
-    "ALGOUSD": "ALGO-USD",
-    "AAVEUSD": "AAVE-USD",
+    "ALGUSD": "ALGO-USD",
+    "AAVUSD": "AAVE-USD",
     "NEOUSD": "NEO-USD",
     "DASHUSD": "DASH-USD",
     "ICPUSD": "ICP-USD",
@@ -145,6 +145,7 @@ FTMO_TO_YFINANCE: Dict[str, str] = {
     "BARUSD": "BAR-USD",
     "MANUSD": "MANA-USD",
     "VECUSD": "VET-USD",
+    "XLMUSD": "XLM-USD",
     
     # -------------------------------------------------------------------------
     # ACTIONS
@@ -178,18 +179,25 @@ YFINANCE_TO_FTMO: Dict[str, str] = {v: k for k, v in FTMO_TO_YFINANCE.items()}
 
 
 # =============================================================================
-# UNIVERS PAR CLASSE D'ACTIFS (symboles FTMO)
+# UNIVERS PAR CLASSE D'ACTIFS (symboles FTMO) - Complet d'après cTrader
 # =============================================================================
 
 FTMO_FOREX: List[str] = [
+    # Majors
     "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "NZDUSD", "USDCAD",
-    "EURGBP", "EURJPY", "EURCHF", "EURAUD", "EURNZD", "EURCAD",
-    "GBPJPY", "GBPCHF", "GBPAUD", "GBPNZD", "GBPCAD",
-    "AUDJPY", "AUDNZD", "AUDCAD", "AUDCHF",
-    "NZDJPY", "NZDCAD", "NZDCHF",
-    "CADJPY", "CADCHF", "CHFJPY",
-    "USDMXN", "USDZAR", "USDNOK", "USDSEK", "USDPLN", "USDHUF",
-    "EURNOK", "EURPLN", "EURHUF", "EURCZK",
+    # EUR crosses
+    "EURAUD", "EURCAD", "EURCHF", "EURCZK", "EURGBP", "EURHUF", "EURJPY", 
+    "EURNOK", "EURNZD", "EURPLN",
+    # GBP crosses
+    "GBPAUD", "GBPCAD", "GBPCHF", "GBPJPY", "GBPNZD",
+    # AUD/NZD crosses
+    "AUDCAD", "AUDCHF", "AUDJPY", "AUDNZD",
+    "NZDCAD", "NZDCHF", "NZDJPY",
+    # CAD/CHF crosses
+    "CADCHF", "CADJPY", "CHFJPY",
+    # Exotiques
+    "USDCNH", "USDCZK", "USDHKD", "USDHUF", "USDILS", "USDMXN", 
+    "USDNOK", "USDPLN", "USDSEK", "USDSGD", "USDZAR",
 ]
 
 FTMO_INDICES: List[str] = [
@@ -197,27 +205,38 @@ FTMO_INDICES: List[str] = [
     "GER40.cash", "UK100.cash", "FRA40.cash", "EU50.cash",
     "JP225.cash", "AUS200.cash", "HK50.cash",
     "SPN35.cash", "N25.cash",
+    "DXY.cash",  # Dollar Index
 ]
 
 FTMO_METALS: List[str] = [
     "XAUUSD", "XAGUSD", "XPTUSD", "XPDUSD", "XCUUSD",
+    "XAUEUR", "XAGEUR", "XAGAUD",
 ]
 
 FTMO_COMMODITIES: List[str] = [
-    "USOIL.cash", "UKOIL.cash", "NATGAS.cash",
+    "USOIL.cash", "UKOIL.cash", "NATGAS.cash", "HEATOIL.c",
     "COCOA.c", "COFFEE.c", "CORN.c", "COTTON.c",
     "SOYBEAN.c", "SUGAR.c", "WHEAT.c",
 ]
 
 FTMO_CRYPTO: List[str] = [
-    "BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD", "ADAUSD",
-    "SOLUSD", "BNBUSD", "DOGEUSD", "AVAUSD", "DOTUSD",
-    "UNIUSD", "LNKUSD", "BCHUSD", "ETCUSD",
+    # Top caps
+    "BTCUSD", "ETHUSD", "BNBUSD", "XRPUSD", "ADAUSD", "SOLUSD", "DOTUSD",
+    # Altcoins majeurs
+    "LTCUSD", "BCHUSD", "ETCUSD", "XLMUSD", "UNIUSD", "LNKUSD", "AVAUSD",
+    # Autres
+    "AAVUSD", "ALGUSD", "BARUSD", "DASHUSD", "DOGEUSD", "FETUSD", "GALUSD",
+    "GRTUSD", "ICPUSD", "IMXUSD", "MANUSD", "NEOUSD", "NERUSD", "SANUSD",
+    "VECUSD", "XMRUSD", "XTZUSD",
 ]
 
 FTMO_STOCKS: List[str] = [
+    # US Tech
     "AAPL", "AMZN", "GOOG", "MSFT", "META", "NFLX", "NVDA", "TSLA",
-    "BABA", "BAC", "PFE", "V", "WMT",
+    # US Other
+    "BABA", "BAC", "PFE", "V", "WMT", "T", "ZM",
+    # Europe
+    "AIRF", "ALVG", "BAYGn", "DBKGn", "IBE", "LVMH", "RACE", "VOWG_p",
 ]
 
 
@@ -226,42 +245,177 @@ FTMO_STOCKS: List[str] = [
 # =============================================================================
 
 PREDEFINED_PAIRS: List[Tuple[str, str]] = [
-    # --- INDICES US ---
+    # ==========================================================================
+    # INDICES US (même zone horaire, même macro)
+    # ==========================================================================
     ("US500.cash", "US100.cash"),
     ("US500.cash", "US30.cash"),
     ("US100.cash", "US30.cash"),
     ("US500.cash", "US2000.cash"),
+    ("US100.cash", "US2000.cash"),
+    ("US30.cash", "US2000.cash"),
     
-    # --- INDICES EUROPE ---
+    # ==========================================================================
+    # INDICES EUROPE (corrélés par la politique BCE)
+    # ==========================================================================
     ("GER40.cash", "FRA40.cash"),
     ("GER40.cash", "EU50.cash"),
+    ("FRA40.cash", "EU50.cash"),
     ("UK100.cash", "GER40.cash"),
+    ("UK100.cash", "EU50.cash"),
+    ("SPN35.cash", "EU50.cash"),
     
-    # --- FOREX ---
-    ("EURUSD", "GBPUSD"),
-    ("AUDUSD", "NZDUSD"),
+    # ==========================================================================
+    # INDICES CROSS-CONTINENT
+    # ==========================================================================
+    ("US500.cash", "GER40.cash"),
+    ("US500.cash", "UK100.cash"),
+    ("US100.cash", "GER40.cash"),
+    
+    # ==========================================================================
+    # FOREX MAJEURS - Paires EUR
+    # ==========================================================================
+    ("EURUSD", "EURGBP"),
+    ("EURUSD", "EURJPY"),
+    ("EURUSD", "EURCHF"),
+    ("EURUSD", "EURAUD"),
+    ("EURUSD", "EURCAD"),
+    ("EURUSD", "EURNZD"),
     ("EURGBP", "EURJPY"),
-    ("GBPJPY", "EURJPY"),
-    ("AUDNZD", "AUDCAD"),
+    ("EURGBP", "EURCHF"),
+    ("EURJPY", "EURCHF"),
+    ("EURAUD", "EURNZD"),
+    ("EURAUD", "EURCAD"),
+    ("EURNZD", "EURCAD"),
     
-    # --- MÉTAUX ---
+    # ==========================================================================
+    # FOREX MAJEURS - Paires GBP
+    # ==========================================================================
+    ("GBPUSD", "GBPJPY"),
+    ("GBPUSD", "GBPCHF"),
+    ("GBPUSD", "GBPAUD"),
+    ("GBPUSD", "GBPCAD"),
+    ("GBPJPY", "GBPCHF"),
+    ("GBPJPY", "GBPAUD"),
+    ("GBPAUD", "GBPNZD"),
+    ("GBPAUD", "GBPCAD"),
+    ("GBPNZD", "GBPCAD"),
+    
+    # ==========================================================================
+    # FOREX MAJEURS - Paires AUD/NZD (Pacifique - très corrélées)
+    # ==========================================================================
+    ("AUDUSD", "NZDUSD"),
+    ("AUDJPY", "NZDJPY"),
+    ("AUDCAD", "NZDCAD"),
+    ("AUDCHF", "NZDCHF"),
+    ("AUDNZD", "AUDCAD"),
+    ("AUDNZD", "AUDCHF"),
+    ("AUDUSD", "AUDCAD"),
+    ("NZDUSD", "NZDCAD"),
+    
+    # ==========================================================================
+    # FOREX MAJEURS - Paires JPY (sensibles au yen)
+    # ==========================================================================
+    ("USDJPY", "EURJPY"),
+    ("USDJPY", "GBPJPY"),
+    ("USDJPY", "AUDJPY"),
+    ("USDJPY", "CADJPY"),
+    ("EURJPY", "GBPJPY"),
+    ("EURJPY", "AUDJPY"),
+    ("GBPJPY", "AUDJPY"),
+    ("AUDJPY", "NZDJPY"),
+    ("AUDJPY", "CADJPY"),
+    ("NZDJPY", "CADJPY"),
+    
+    # ==========================================================================
+    # FOREX MAJEURS - Paires CHF (safe haven)
+    # ==========================================================================
+    ("USDCHF", "EURCHF"),
+    ("USDCHF", "GBPCHF"),
+    ("EURCHF", "GBPCHF"),
+    ("AUDCHF", "NZDCHF"),
+    ("EURCHF", "CHFJPY"),
+    ("CADCHF", "CHFJPY"),
+    
+    # ==========================================================================
+    # FOREX MAJEURS - Paires CAD (sensibles pétrole)
+    # ==========================================================================
+    ("USDCAD", "EURCAD"),
+    ("USDCAD", "GBPCAD"),
+    ("EURCAD", "GBPCAD"),
+    ("AUDCAD", "NZDCAD"),
+    ("CADJPY", "CADCHF"),
+    
+    # ==========================================================================
+    # FOREX - Cross EUR/GBP (très liées)
+    # ==========================================================================
+    ("EURUSD", "GBPUSD"),
+    ("EURJPY", "GBPJPY"),
+    ("EURCHF", "GBPCHF"),
+    ("EURAUD", "GBPAUD"),
+    ("EURCAD", "GBPCAD"),
+    ("EURNZD", "GBPNZD"),
+    
+    # ==========================================================================
+    # MÉTAUX (corrélation historique or/argent)
+    # ==========================================================================
     ("XAUUSD", "XAGUSD"),
     ("XPTUSD", "XPDUSD"),
+    ("XAUUSD", "XPTUSD"),
+    ("XAGUSD", "XPTUSD"),
+    ("XAUUSD", "XAUEUR"),  # Or USD vs EUR
+    ("XAGUSD", "XAGEUR"),  # Argent USD vs EUR
+    ("XAGAUD", "XAGUSD"),  # Argent AUD vs USD
     
-    # --- ENERGIE ---
+    # ==========================================================================
+    # ENERGIE (WTI/Brent très corrélés)
+    # ==========================================================================
     ("USOIL.cash", "UKOIL.cash"),
+    ("NATGAS.cash", "USOIL.cash"),
     
-    # --- COMMODITIES AGRICOLES ---
+    # ==========================================================================
+    # COMMODITIES AGRICOLES
+    # ==========================================================================
     ("CORN.c", "WHEAT.c"),
     ("CORN.c", "SOYBEAN.c"),
+    ("WHEAT.c", "SOYBEAN.c"),
+    ("COFFEE.c", "COCOA.c"),
+    ("SUGAR.c", "COTTON.c"),
     
-    # --- CRYPTO ---
+    # ==========================================================================
+    # CRYPTO - Top caps (très corrélées en tendance)
+    # ==========================================================================
     ("BTCUSD", "ETHUSD"),
+    ("BTCUSD", "BNBUSD"),
+    ("BTCUSD", "SOLUSD"),
+    ("BTCUSD", "XRPUSD"),
     ("ETHUSD", "SOLUSD"),
+    ("ETHUSD", "BNBUSD"),
+    ("ETHUSD", "ADAUSD"),
+    ("BTCUSD", "LTCUSD"),
+    ("SOLUSD", "AVAUSD"),
+    ("DOTUSD", "ADAUSD"),
+    ("XLMUSD", "XRPUSD"),  # Même fondateur
+    ("LNKUSD", "ETHUSD"),  # Chainlink suit ETH
+    ("UNIUSD", "ETHUSD"),  # DeFi suit ETH
     
-    # --- ACTIONS ---
+    # ==========================================================================
+    # ACTIONS US - Tech (FAANG corrélées)
+    # ==========================================================================
     ("AAPL", "MSFT"),
     ("GOOG", "META"),
+    ("AMZN", "MSFT"),
+    ("NVDA", "AMZN"),
+    ("NFLX", "GOOG"),
+    ("META", "GOOG"),
+    ("TSLA", "NVDA"),
+    
+    # ==========================================================================
+    # ACTIONS EUROPE (même secteur)
+    # ==========================================================================
+    ("LVMH", "RACE"),     # Luxe
+    ("ALVG", "BAYGn"),    # DAX santé/chimie
+    ("DBKGn", "BAC"),     # Banques
 ]
 
 

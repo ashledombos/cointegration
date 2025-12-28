@@ -3,11 +3,17 @@ Main Orchestrator - Système de Pairs Trading par Coïntégration
 ================================================================
 Point d'entrée principal avec scheduling des tâches.
 
-Version: 1.0.0
+Version: 1.1.0
 Date: 2025-12-27
 
 Changelog:
 ---------
+v1.1.0 (2025-12-27)
+    - Ajout module de backtesting
+    - Commande: python main.py backtest --pair GBPJPY,EURJPY
+    - Commande: python main.py backtest --full
+    - Génération rapport Markdown
+
 v1.0.0 (2025-12-27)
     - Initial release
     - Scan coïntégration multi-univers (Forex, Indices, Commodities, Crypto)
@@ -17,7 +23,7 @@ v1.0.0 (2025-12-27)
     - Logrotate automatique via Loguru
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "Raph"
 
 import asyncio
@@ -378,13 +384,24 @@ def cli():
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["run", "scan", "check", "report", "init"],
+        choices=["run", "scan", "check", "report", "init", "backtest"],
         help="Command to execute"
     )
     parser.add_argument(
         "--full",
         action="store_true",
         help="Scan all possible combinations (not just predefined pairs)"
+    )
+    parser.add_argument(
+        "--pair",
+        type=str,
+        help="Single pair for backtest (e.g., GBPJPY,EURJPY)"
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=730,
+        help="Lookback days for backtest (default: 730)"
     )
     parser.add_argument(
         "--debug",
@@ -495,6 +512,56 @@ def cli():
         print(f"\nInitialization complete:")
         print(f"  Cointegrated pairs found: {result.cointegrated_found}")
         print("\nSystem ready. Run 'python main.py run' to start monitoring.")
+    
+    elif args.command == "backtest":
+        # Run backtest
+        from backtest import (
+            PairsBacktester, 
+            run_multi_pair_backtest, 
+            print_backtest_summary,
+            generate_backtest_report
+        )
+        
+        if args.pair:
+            # Single pair backtest
+            symbols = args.pair.split(",")
+            if len(symbols) != 2:
+                print("Error: --pair must be in format SYMBOL1,SYMBOL2")
+                sys.exit(1)
+            
+            print(f"Running backtest for {symbols[0]}/{symbols[1]} over {args.days} days...")
+            backtester = PairsBacktester(lookback_days=args.days)
+            result = backtester.run_backtest(symbols[0].strip(), symbols[1].strip())
+            print_backtest_summary(result)
+        
+        elif args.full:
+            # All predefined pairs
+            print(f"Running backtest on ALL predefined pairs ({args.days} days)...")
+            print("This may take 10-30 minutes.\n")
+            
+            # PREDEFINED_PAIRS est une liste de tuples (symbol1, symbol2)
+            pairs = [(p[0], p[1]) for p in PREDEFINED_PAIRS]
+            results = run_multi_pair_backtest(pairs, lookback_days=args.days)
+            
+            output_file = f"backtest_report_{datetime.now().strftime('%Y%m%d_%H%M')}.md"
+            generate_backtest_report(results, output_file)
+            print(f"\n📄 Full report saved to {output_file}")
+        
+        else:
+            # Default: backtest currently active pairs from DB
+            active_pairs = db.get_active_pairs()
+            if not active_pairs:
+                print("No active pairs in database. Run 'python main.py init' first.")
+                print("Or use --pair SYMBOL1,SYMBOL2 or --full")
+                sys.exit(1)
+            
+            print(f"Running backtest on {len(active_pairs)} active pairs ({args.days} days)...")
+            pairs = [(p.symbol1, p.symbol2) for p in active_pairs]
+            results = run_multi_pair_backtest(pairs, lookback_days=args.days)
+            
+            output_file = f"backtest_report_{datetime.now().strftime('%Y%m%d_%H%M')}.md"
+            generate_backtest_report(results, output_file)
+            print(f"\n📄 Report saved to {output_file}")
 
 
 if __name__ == "__main__":

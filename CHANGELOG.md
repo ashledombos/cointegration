@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2025-12-27
+
+### Added
+- Backtesting module (`backtest.py`) for historical strategy validation
+- CLI commands: `python main.py backtest --pair GBPJPY,EURJPY` and `python main.py backtest --full`
+- Automated Markdown report generation with performance metrics
+- Metrics: win rate, profit factor, expectancy, max drawdown, Sharpe-like ratios
+- Rolling cointegration recalibration during backtest (every 30 days)
+- Trade-by-trade logging with entry/exit reasons
+
+### Changed
+- Version bumped to 1.1.0
+
 ## [1.0.0] - 2025-12-27
 
 ### Added
