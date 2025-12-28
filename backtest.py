@@ -178,8 +178,28 @@ class PairsBacktester:
         Test de coïntégration avec les paramètres du backtest.
         Utilise min_half_life et max_half_life du backtester, pas de la config globale.
         """
-        # Test de coïntégration statsmodels
-        score, pvalue, _ = coint(series1, series2)
+        import warnings
+        
+        # Détection de colinéarité (même actif, devises différentes)
+        correlation = series1.corr(series2)
+        if abs(correlation) > 0.999:
+            logger.warning(f"Colinéarité détectée ({symbol1}/{symbol2}): corr={correlation:.4f} - Skip")
+            return CointegrationResult(
+                symbol1=symbol1,
+                symbol2=symbol2,
+                is_cointegrated=False,
+                pvalue=1.0,
+                hedge_ratio=1.0,
+                half_life=999,
+                spread_mean=0.0,
+                spread_std=1.0,
+                test_method="skipped_collinear"
+            )
+        
+        # Test de coïntégration statsmodels (avec suppression des warnings)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            score, pvalue, _ = coint(series1, series2)
         
         # Calcul du hedge ratio via OLS
         X = sm.add_constant(series2)
@@ -811,6 +831,195 @@ def generate_backtest_report(
     return content
 
 
+@dataclass
+class AutoUpdateResult:
+    """Résultat de la mise à jour automatique."""
+    total_pairs_tested: int = 0
+    viable_pairs: List[str] = field(default_factory=list)
+    marginal_pairs: List[str] = field(default_factory=list)
+    non_viable_pairs: List[str] = field(default_factory=list)
+    newly_activated: List[str] = field(default_factory=list)
+    newly_deactivated: List[str] = field(default_factory=list)
+    report_path: str = ""
+    
+    def to_summary(self) -> str:
+        """Génère un résumé pour notification."""
+        lines = [
+            "📊 BACKTEST AUTO-UPDATE",
+            "",
+            f"Paires testées: {self.total_pairs_tested}",
+            f"✅ Viables: {len(self.viable_pairs)}",
+            f"⚠️ Marginales: {len(self.marginal_pairs)}",
+            f"❌ Non viables: {len(self.non_viable_pairs)}",
+        ]
+        
+        if self.newly_activated:
+            lines.append(f"\n🆕 Nouvelles actives ({len(self.newly_activated)}):")
+            for p in self.newly_activated[:5]:
+                lines.append(f"  • {p}")
+            if len(self.newly_activated) > 5:
+                lines.append(f"  ... et {len(self.newly_activated) - 5} autres")
+        
+        if self.newly_deactivated:
+            lines.append(f"\n🔴 Désactivées ({len(self.newly_deactivated)}):")
+            for p in self.newly_deactivated[:5]:
+                lines.append(f"  • {p}")
+            if len(self.newly_deactivated) > 5:
+                lines.append(f"  ... et {len(self.newly_deactivated) - 5} autres")
+        
+        if self.report_path:
+            lines.append(f"\n📄 Rapport: {self.report_path}")
+        
+        return "\n".join(lines)
+
+
+def auto_update_pairs(
+    lookback_days: int = 180,
+    min_profit_factor: float = 1.5,
+    min_win_rate: float = 0.5,
+    min_trades: int = 1,
+    deactivate_losing: bool = True,
+    zscore_entry: float = 1.5,
+) -> AutoUpdateResult:
+    """
+    Lance un backtest et met à jour automatiquement les paires actives.
+    
+    Args:
+        lookback_days: Période de backtest
+        min_profit_factor: PF minimum pour être viable
+        min_win_rate: Win rate minimum
+        min_trades: Nombre minimum de trades
+        deactivate_losing: Désactiver les paires non viables
+        zscore_entry: Z-score d'entrée pour le backtest
+    
+    Returns:
+        AutoUpdateResult avec le résumé des changements
+    """
+    from config import PREDEFINED_PAIRS
+    from database import Database
+    import json
+    
+    logger.info("=" * 60)
+    logger.info("AUTO-UPDATE: Starting backtest and pair update")
+    logger.info("=" * 60)
+    
+    db = Database()
+    result = AutoUpdateResult()
+    
+    # Récupérer les paires actuellement actives
+    current_active = {p.pair_id for p in db.get_active_pairs()}
+    logger.info(f"Currently active pairs: {len(current_active)}")
+    
+    # Lancer le backtest
+    pairs = [(p[0], p[1]) for p in PREDEFINED_PAIRS]
+    backtester = PairsBacktester(
+        lookback_days=lookback_days,
+        zscore_entry=zscore_entry,
+    )
+    
+    backtest_results = {}
+    for symbol1, symbol2 in pairs:
+        pair_id = f"{symbol1}_{symbol2}"
+        logger.info(f"Testing {pair_id}...")
+        bt_result = backtester.run_backtest(symbol1, symbol2)
+        backtest_results[pair_id] = bt_result
+    
+    result.total_pairs_tested = len(backtest_results)
+    
+    # Analyser les résultats
+    for pair_id, bt_result in backtest_results.items():
+        is_viable = (
+            bt_result.total_trades >= min_trades and
+            bt_result.profit_factor >= min_profit_factor and
+            bt_result.win_rate >= min_win_rate and
+            bt_result.expectancy > 0
+        )
+        
+        is_marginal = (
+            bt_result.total_trades >= min_trades and
+            bt_result.profit_factor >= 1.2 and
+            bt_result.expectancy > 0 and
+            not is_viable
+        )
+        
+        # Classer la paire
+        if is_viable:
+            result.viable_pairs.append(pair_id)
+        elif is_marginal:
+            result.marginal_pairs.append(pair_id)
+        else:
+            result.non_viable_pairs.append(pair_id)
+        
+        # Mettre à jour la DB
+        symbols = pair_id.split("_")
+        if len(symbols) == 2:
+            symbol1, symbol2 = symbols
+            
+            # Stocker les métriques dans notes (JSON)
+            metrics = {
+                "backtest_date": datetime.now().isoformat(),
+                "lookback_days": lookback_days,
+                "total_trades": bt_result.total_trades,
+                "win_rate": round(bt_result.win_rate, 3),
+                "profit_factor": round(bt_result.profit_factor, 2) if bt_result.profit_factor != float('inf') else 999,
+                "expectancy": round(bt_result.expectancy, 2),
+                "max_drawdown": round(bt_result.max_drawdown_percent, 2),
+                "avg_half_life": round(bt_result.avg_half_life, 1),
+                "verdict": "viable" if is_viable else ("marginal" if is_marginal else "non_viable"),
+            }
+            
+            if is_viable or is_marginal:
+                # Activer/mettre à jour la paire
+                pair = db.save_pair(
+                    pair_id=pair_id,
+                    symbol1=symbol1,
+                    symbol2=symbol2,
+                    hedge_ratio=bt_result.trades[0].hedge_ratio if bt_result.trades else 1.0,
+                    half_life=bt_result.avg_half_life or 10.0,
+                    pvalue=0.05,  # On n'a pas le pvalue dans le backtest
+                    spread_mean=0.0,
+                    spread_std=1.0,
+                    test_method="backtest_validated"
+                )
+                
+                # Mettre à jour notes avec métriques
+                session = db.get_session()
+                try:
+                    db_pair = session.query(db.get_pair(pair_id).__class__).filter_by(pair_id=pair_id).first()
+                    if db_pair:
+                        db_pair.notes = json.dumps(metrics)
+                        db_pair.is_active = True
+                        session.commit()
+                finally:
+                    session.close()
+                
+                # Tracker les nouvelles activations
+                if pair_id not in current_active:
+                    result.newly_activated.append(pair_id)
+                    
+            elif deactivate_losing and pair_id in current_active:
+                # Désactiver la paire
+                db.deactivate_pair(pair_id, reason=json.dumps(metrics))
+                result.newly_deactivated.append(pair_id)
+    
+    # Générer le rapport
+    output_path = f"backtest_report_{datetime.now().strftime('%Y%m%d_%H%M')}.md"
+    generate_backtest_report(backtest_results, output_path)
+    result.report_path = output_path
+    
+    # Log du résumé
+    logger.info("=" * 60)
+    logger.info("AUTO-UPDATE COMPLETE")
+    logger.info(f"  Viable: {len(result.viable_pairs)}")
+    logger.info(f"  Marginal: {len(result.marginal_pairs)}")
+    logger.info(f"  Non viable: {len(result.non_viable_pairs)}")
+    logger.info(f"  Newly activated: {len(result.newly_activated)}")
+    logger.info(f"  Newly deactivated: {len(result.newly_deactivated)}")
+    logger.info("=" * 60)
+    
+    return result
+
+
 # CLI
 if __name__ == "__main__":
     import argparse
@@ -846,7 +1055,7 @@ if __name__ == "__main__":
         # All predefined pairs
         from config import PREDEFINED_PAIRS
         
-        pairs = [(p["symbol1"], p["symbol2"]) for p in PREDEFINED_PAIRS]
+        pairs = [(p[0], p[1]) for p in PREDEFINED_PAIRS]
         results = run_multi_pair_backtest(pairs, lookback_days=args.days)
         generate_backtest_report(results, args.output)
         

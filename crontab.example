@@ -1,0 +1,28 @@
+# =============================================================================
+# Pairs Trading Cron Jobs
+# =============================================================================
+# Install with: crontab -e
+# Then paste the relevant lines below
+# =============================================================================
+
+# Weekly backtest auto-update (Sundays at 2:00 AM)
+# Backtests all pairs and updates active pairs based on performance
+0 2 * * 0 cd ~/dev/cointegration && python main.py backtest --auto-update --notify >> logs/weekly_backtest.log 2>&1
+
+# Daily monitoring (every 4 hours during market hours)
+# Checks z-scores and sends alerts when thresholds are hit
+0 6,10,14,18,22 * * 1-5 cd ~/dev/cointegration && python main.py check >> logs/check.log 2>&1
+
+# Weekly full scan (Sundays at 6:00 PM) 
+# Scans all possible pairs for new cointegration opportunities
+0 18 * * 0 cd ~/dev/cointegration && python main.py scan --full >> logs/weekly_scan.log 2>&1
+
+# Daily recalibration (06:00 UTC)
+# Recalibrates hedge ratios and spread parameters
+0 6 * * * cd ~/dev/cointegration && python main.py init >> logs/recalibration.log 2>&1
+
+# =============================================================================
+# Alternative: Use systemd timers instead of cron for better logging
+# See: systemd/pairs-trading-weekly.timer
+# =============================================================================
+

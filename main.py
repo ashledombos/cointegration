@@ -3,11 +3,17 @@ Main Orchestrator - Système de Pairs Trading par Coïntégration
 ================================================================
 Point d'entrée principal avec scheduling des tâches.
 
-Version: 1.1.0
-Date: 2025-12-27
+Version: 1.2.0
+Date: 2025-12-28
 
 Changelog:
 ---------
+v1.2.0 (2025-12-28)
+    - Ajout --auto-update: backtest + mise à jour automatique des paires
+    - Ajout --notify: envoi notification avec résultats
+    - Ajout paramètres: --min-pf, --min-wr, --zscore-entry
+    - Changement --days default: 730 → 180 (plus rapide, plus pertinent)
+    
 v1.1.0 (2025-12-27)
     - Ajout module de backtesting
     - Commande: python main.py backtest --pair GBPJPY,EURJPY
@@ -23,7 +29,7 @@ v1.0.0 (2025-12-27)
     - Logrotate automatique via Loguru
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __author__ = "Raph"
 
 import asyncio
@@ -400,8 +406,36 @@ def cli():
     parser.add_argument(
         "--days",
         type=int,
-        default=730,
-        help="Lookback days for backtest (default: 730)"
+        default=180,
+        help="Lookback days for backtest (default: 180)"
+    )
+    parser.add_argument(
+        "--auto-update",
+        action="store_true",
+        help="Backtest + auto-update active pairs based on results"
+    )
+    parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="Send notification with backtest results"
+    )
+    parser.add_argument(
+        "--min-pf",
+        type=float,
+        default=1.5,
+        help="Minimum profit factor for viable pairs (default: 1.5)"
+    )
+    parser.add_argument(
+        "--min-wr",
+        type=float,
+        default=0.5,
+        help="Minimum win rate for viable pairs (default: 0.5)"
+    )
+    parser.add_argument(
+        "--zscore-entry",
+        type=float,
+        default=1.5,
+        help="Z-score entry threshold for backtest (default: 1.5)"
     )
     parser.add_argument(
         "--debug",
@@ -519,10 +553,56 @@ def cli():
             PairsBacktester, 
             run_multi_pair_backtest, 
             print_backtest_summary,
-            generate_backtest_report
+            generate_backtest_report,
+            auto_update_pairs,
+            AutoUpdateResult
         )
         
-        if args.pair:
+        if args.auto_update:
+            # Auto-update mode: backtest + update DB
+            print(f"Running AUTO-UPDATE backtest ({args.days} days)...")
+            print(f"Parameters: PF >= {args.min_pf}, WR >= {args.min_wr*100}%, zscore_entry = {args.zscore_entry}")
+            print("This may take 1-2 minutes.\n")
+            
+            result = auto_update_pairs(
+                lookback_days=args.days,
+                min_profit_factor=args.min_pf,
+                min_win_rate=args.min_wr,
+                zscore_entry=args.zscore_entry,
+            )
+            
+            # Print summary
+            print("\n" + "=" * 60)
+            print("AUTO-UPDATE COMPLETE")
+            print("=" * 60)
+            print(f"Paires testées: {result.total_pairs_tested}")
+            print(f"✅ Viables: {len(result.viable_pairs)}")
+            print(f"⚠️  Marginales: {len(result.marginal_pairs)}")
+            print(f"❌ Non viables: {len(result.non_viable_pairs)}")
+            
+            if result.newly_activated:
+                print(f"\n🆕 Nouvelles paires activées ({len(result.newly_activated)}):")
+                for p in result.newly_activated:
+                    print(f"   • {p}")
+            
+            if result.newly_deactivated:
+                print(f"\n🔴 Paires désactivées ({len(result.newly_deactivated)}):")
+                for p in result.newly_deactivated:
+                    print(f"   • {p}")
+            
+            print(f"\n📄 Rapport: {result.report_path}")
+            
+            # Send notification if requested
+            if args.notify:
+                print("\n📤 Sending notification...")
+                try:
+                    from alerts import send_signal_sync
+                    send_signal_sync(result.to_summary())
+                    print("✅ Notification sent!")
+                except Exception as e:
+                    print(f"⚠️  Notification failed: {e}")
+        
+        elif args.pair:
             # Single pair backtest
             symbols = args.pair.split(",")
             if len(symbols) != 2:
@@ -530,18 +610,22 @@ def cli():
                 sys.exit(1)
             
             print(f"Running backtest for {symbols[0]}/{symbols[1]} over {args.days} days...")
-            backtester = PairsBacktester(lookback_days=args.days)
+            backtester = PairsBacktester(lookback_days=args.days, zscore_entry=args.zscore_entry)
             result = backtester.run_backtest(symbols[0].strip(), symbols[1].strip())
             print_backtest_summary(result)
         
         elif args.full:
             # All predefined pairs
             print(f"Running backtest on ALL predefined pairs ({args.days} days)...")
-            print("This may take 10-30 minutes.\n")
+            print("This may take 1-2 minutes.\n")
             
             # PREDEFINED_PAIRS est une liste de tuples (symbol1, symbol2)
             pairs = [(p[0], p[1]) for p in PREDEFINED_PAIRS]
-            results = run_multi_pair_backtest(pairs, lookback_days=args.days)
+            backtester = PairsBacktester(lookback_days=args.days, zscore_entry=args.zscore_entry)
+            results = {}
+            for s1, s2 in pairs:
+                pair_id = f"{s1}_{s2}"
+                results[pair_id] = backtester.run_backtest(s1, s2)
             
             output_file = f"backtest_report_{datetime.now().strftime('%Y%m%d_%H%M')}.md"
             generate_backtest_report(results, output_file)
@@ -557,7 +641,11 @@ def cli():
             
             print(f"Running backtest on {len(active_pairs)} active pairs ({args.days} days)...")
             pairs = [(p.symbol1, p.symbol2) for p in active_pairs]
-            results = run_multi_pair_backtest(pairs, lookback_days=args.days)
+            backtester = PairsBacktester(lookback_days=args.days, zscore_entry=args.zscore_entry)
+            results = {}
+            for s1, s2 in pairs:
+                pair_id = f"{s1}_{s2}"
+                results[pair_id] = backtester.run_backtest(s1, s2)
             
             output_file = f"backtest_report_{datetime.now().strftime('%Y%m%d_%H%M')}.md"
             generate_backtest_report(results, output_file)

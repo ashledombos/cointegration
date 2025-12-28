@@ -363,9 +363,10 @@ PREDEFINED_PAIRS: List[Tuple[str, str]] = [
     ("XPTUSD", "XPDUSD"),
     ("XAUUSD", "XPTUSD"),
     ("XAGUSD", "XPTUSD"),
-    ("XAUUSD", "XAUEUR"),  # Or USD vs EUR
-    ("XAGUSD", "XAGEUR"),  # Argent USD vs EUR
-    ("XAGAUD", "XAGUSD"),  # Argent AUD vs USD
+    # EXCLUS - Même actif, devises différentes (colinéarité parfaite = pas du pairs trading)
+    # ("XAUUSD", "XAUEUR"),  # Or USD vs Or EUR = juste trading EUR/USD
+    # ("XAGUSD", "XAGEUR"),  # Argent USD vs Argent EUR
+    # ("XAGAUD", "XAGUSD"),  # Argent AUD vs Argent USD
     
     # ==========================================================================
     # ENERGIE (WTI/Brent très corrélés)
@@ -376,8 +377,9 @@ PREDEFINED_PAIRS: List[Tuple[str, str]] = [
     # ==========================================================================
     # COMMODITIES AGRICOLES
     # ==========================================================================
-    ("CORN.c", "WHEAT.c"),
-    ("CORN.c", "SOYBEAN.c"),
+    # EXCLUS - Données insuffisantes sur Yahoo Finance
+    # ("CORN.c", "WHEAT.c"),
+    # ("CORN.c", "SOYBEAN.c"),
     ("WHEAT.c", "SOYBEAN.c"),
     ("COFFEE.c", "COCOA.c"),
     ("SUGAR.c", "COTTON.c"),
@@ -397,7 +399,8 @@ PREDEFINED_PAIRS: List[Tuple[str, str]] = [
     ("DOTUSD", "ADAUSD"),
     ("XLMUSD", "XRPUSD"),  # Même fondateur
     ("LNKUSD", "ETHUSD"),  # Chainlink suit ETH
-    ("UNIUSD", "ETHUSD"),  # DeFi suit ETH
+    # EXCLUS - Données insuffisantes
+    # ("UNIUSD", "ETHUSD"),  # DeFi suit ETH
     
     # ==========================================================================
     # ACTIONS US - Tech (FAANG corrélées)
@@ -446,7 +449,7 @@ class CointegrationConfig:
 
 @dataclass
 class SignalConfig:
-    zscore_entry: float = 2.0
+    zscore_entry: float = 1.5  # Seuil d'entrée (optimisé via backtest)
     zscore_exit: float = 1.0
     zscore_warning: float = 2.5  # Alerte intermédiaire avant stop
     zscore_stop: float = 3.0
